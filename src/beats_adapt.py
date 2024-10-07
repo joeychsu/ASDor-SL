@@ -30,42 +30,40 @@ class TemporalConvNet(nn.Module):
         self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size, padding=kernel_size//2)
     
     def forward(self, x):
-        # x shape: [batch_size, sequence_length, input_dim]
-        x = x.transpose(1, 2)  # [batch_size, input_dim, sequence_length]
+        x = x.transpose(1, 2)
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        return x.mean(dim=2)  # 全局平均池化
+        return x.mean(dim=2)
 
-# 自訂分類模型
 class BEATsForAudioClassification(nn.Module):
-    def __init__(self, model_name='BEATs_iter3_plus_AS20K.pt', num_labels=3, dropout_rate=0.1, l1_reg=0.01, l2_reg=0.01, freeze_encoder=True):
+    def __init__(self, num_labels=3, dropout_rate=0.1, l1_reg=0.01, l2_reg=0.01, freeze_encoder=True):
         super().__init__()
-        # 加載預訓練的BEATs模型
-        checkpoint = torch.load(model_name, map_location=torch.device('cpu'))
-        cfg = BEATsConfig(checkpoint['cfg'])
-        self.beats = BEATs(cfg)
-        self.beats.load_state_dict(checkpoint['model'])
-        
-        self.tcn = TemporalConvNet(768, hidden_dim=256)
+        self.cfg = None
+        self.beats = None
+        self.tcn = TemporalConvNet(768, hidden_dim=512)
         self.dropout1 = nn.Dropout(dropout_rate)
-        self.fc1 = nn.Linear(256, num_labels)
+        self.fc1 = nn.Linear(512, num_labels)
         self.l1_reg = l1_reg
         self.l2_reg = l2_reg
+        self.freeze_encoder = freeze_encoder
+
+    def initialize_beats(self, model_path, device):
+        checkpoint = torch.load(model_path, map_location=device)
+        self.cfg = BEATsConfig(checkpoint['cfg'])
+        self.beats = BEATs(self.cfg)
+        self.beats.load_state_dict(checkpoint['model'])
+        self.beats.to(device)
         
-        if freeze_encoder:
+        if self.freeze_encoder:
             self.freeze_beats_encoder()
 
     def forward(self, input_features):
-        # input_features 的形狀應該是 [batch_size, sequence_length]
+        if self.beats is None:
+            raise RuntimeError("BEATs model is not initialized. Call initialize_beats() first.")
+        
         padding_mask = torch.zeros(input_features.shape[0], input_features.shape[1], dtype=torch.bool, device=input_features.device)
-        
-        # 使用 BEATs 模型提取特徵
         features = self.beats.extract_features(input_features, padding_mask=padding_mask)[0]
-        
-        # 對特徵進行平均池化
-        #pooled_output = features.mean(dim=1)
         pooled_output = self.tcn(features)
-        
         x = self.dropout1(pooled_output)
         logits = self.fc1(x)
         return logits
@@ -82,23 +80,67 @@ class BEATsForAudioClassification(nn.Module):
         l1_loss = 0.0
         l2_loss = 0.0
         for param in self.parameters():
-            if param.requires_grad:  # 只对未冻结的参数应用正则化
+            if param.requires_grad:
                 l1_loss += torch.norm(param, 1)
                 l2_loss += torch.norm(param, 2)
         return self.l1_reg * l1_loss + self.l2_reg * l2_loss
 
-    def save_checkpoint(self, model, optimizer, epoch, train_loss, train_accuracy, eval_loss, eval_accuracy, filename):
+    def save_model(self, save_path, optimizer=None, epoch=None, train_loss=None, train_accuracy=None, eval_loss=None, eval_accuracy=None):
+        """
+        Save the complete model state, including BEATs and additional layers.
+        """
+        if self.beats is None:
+            raise RuntimeError("BEATs model is not initialized. Call initialize_beats() first.")
+
         checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': train_loss,
-            'train_accuracy': train_accuracy,
-            'eval_loss': eval_loss,
-            'eval_accuracy': eval_accuracy
+            'beats_config': self.cfg,
+            'beats_state_dict': self.beats.state_dict(),
+            'tcn_state_dict': self.tcn.state_dict(),
+            'fc1_state_dict': self.fc1.state_dict(),
+            'dropout1_state_dict': self.dropout1.state_dict(),
+            'l1_reg': self.l1_reg,
+            'l2_reg': self.l2_reg,
+            'freeze_encoder': self.freeze_encoder
         }
-        torch.save(checkpoint, filename)
 
-    
+        if optimizer is not None:
+            checkpoint['optimizer_state_dict'] = optimizer.state_dict()
+        if epoch is not None:
+            checkpoint['epoch'] = epoch
+        if train_loss is not None:
+            checkpoint['train_loss'] = train_loss
+        if train_accuracy is not None:
+            checkpoint['train_accuracy'] = train_accuracy
+        if eval_loss is not None:
+            checkpoint['eval_loss'] = eval_loss
+        if eval_accuracy is not None:
+            checkpoint['eval_accuracy'] = eval_accuracy
 
-    
+        torch.save(checkpoint, save_path)
+        print(f"Model saved to {save_path}")
+
+    @classmethod
+    def load_model(cls, load_path, device):
+        """
+        Load the complete model state, including BEATs and additional layers.
+        """
+        checkpoint = torch.load(load_path, map_location=device)
+        
+        num_labels = checkpoint['fc1_state_dict']['weight'].size(0)
+        model = cls(num_labels=num_labels, 
+                    l1_reg=checkpoint['l1_reg'], 
+                    l2_reg=checkpoint['l2_reg'], 
+                    freeze_encoder=checkpoint['freeze_encoder'])
+
+        model.cfg = checkpoint['beats_config']
+        model.beats = BEATs(model.cfg)
+        model.beats.load_state_dict(checkpoint['beats_state_dict'])
+        
+        model.tcn.load_state_dict(checkpoint['tcn_state_dict'])
+        model.fc1.load_state_dict(checkpoint['fc1_state_dict'])
+        model.dropout1.load_state_dict(checkpoint['dropout1_state_dict'])
+
+        model = model.to(device)
+        
+        print(f"Model loaded from {load_path}")
+        return model, checkpoint

@@ -3,7 +3,7 @@ from tqdm import tqdm
 import torch
 from sklearn.metrics import accuracy_score
 
-def save_checkpoint(model, optimizer, epoch, train_loss, train_accuracy, eval_loss, eval_accuracy, filename):
+def save_checkpoint(model, optimizer, epoch, train_loss, train_accuracy, eval_loss, eval_accuracy, cfg, filename):
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -11,7 +11,8 @@ def save_checkpoint(model, optimizer, epoch, train_loss, train_accuracy, eval_lo
         'train_loss': train_loss,
         'train_accuracy': train_accuracy,
         'eval_loss': eval_loss,
-        'eval_accuracy': eval_accuracy
+        'eval_accuracy': eval_accuracy,
+        'cfg': cfg
     }
     torch.save(checkpoint, filename)
 
