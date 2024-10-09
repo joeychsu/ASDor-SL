@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from src.beats_adapt import BEATsForAudioClassification
 from src.utils.AudioDataset import AudioDataset4raw
+import os
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Audio Classification Testing")
@@ -25,16 +26,26 @@ def test(model, test_loader, device):
     model.eval()
     all_preds = []
     all_labels = []
+    all_probs = []
+    all_files = []
     
     with torch.no_grad():
-        for inputs, labels in tqdm(test_loader, desc="Testing"):
+        for batch_idx, (inputs, labels) in enumerate(tqdm(test_loader, desc="Testing")):
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
+            probs = torch.softmax(outputs, dim=1)
             _, preds = torch.max(outputs, 1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
+            all_probs.extend(probs.cpu().numpy())
+            
+            # 獲取當前批次的文件名
+            start_idx = batch_idx * test_loader.batch_size
+            end_idx = start_idx + labels.size(0)
+            batch_files = test_loader.dataset.audio_labels.iloc[start_idx:end_idx]['filename'].tolist()
+            all_files.extend(batch_files)
     
-    return all_labels, all_preds
+    return all_labels, all_preds, all_probs, all_files
 
 def plot_confusion_matrix(cm, class_names, output_dir):
     plt.figure(figsize=(10, 8))
@@ -65,11 +76,11 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
     
     # Perform testing
-    true_labels, pred_labels = test(model, test_loader, device)
+    true_labels, pred_labels, pred_probs, file_names = test(model, test_loader, device)
     
     # Generate classification report
     class_names = ['ok', 'ng', 'other']
-    report = classification_report(true_labels, pred_labels, target_names=class_names)
+    report = classification_report(true_labels, pred_labels, target_names=class_names, digits=4)
     print(report)
     
     # Save classification report
@@ -80,7 +91,19 @@ def main():
     cm = confusion_matrix(true_labels, pred_labels)
     plot_confusion_matrix(cm, class_names, args.output_dir)
     
+    # Save individual file predictions, probabilities, and true labels
+    predictions_file = os.path.join(args.output_dir, "file_predictions.txt")
+    with open(predictions_file, 'w') as f:
+        f.write("File\tTrue Label\tPredicted Class\tProbability\tCorrect\n")
+        for file, true_label, pred, prob in zip(file_names, true_labels, pred_labels, pred_probs):
+            true_class = class_names[true_label]
+            predicted_class = class_names[pred]
+            probability = prob[pred]
+            is_correct = "Yes" if true_label == pred else "No"
+            f.write(f"{file}\t{true_class}\t{predicted_class}\t{probability:.4f}\t{is_correct}\n")
+    
     print(f"Test results saved in {args.output_dir}")
+    print(f"Individual file predictions saved in {predictions_file}")
 
 if __name__ == "__main__":
     main()

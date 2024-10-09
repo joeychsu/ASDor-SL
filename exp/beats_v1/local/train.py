@@ -89,21 +89,6 @@ def main():
     # 記錄訓練參數
     log_args(args, log_file)
 
-    # Split annotations
-    split_annotations('ASDor_wav/train_annotations.csv', os.path.join(output_dir, "tr_annotations.csv"), 
-        os.path.join(output_dir, "cv_annotations.csv"), train_ratio=0.82, random_state=args.seed)
-
-    # Create datasets
-    train_dataset = AudioDataset4raw(os.path.join(output_dir, "tr_annotations.csv"), augment=args.use_augmentation)
-    valid_dataset = AudioDataset4raw(os.path.join(output_dir, "cv_annotations.csv"), augment=False)
-
-    print(f"Training set size: {len(train_dataset)}")
-    print(f"Validation set size: {len(valid_dataset)}")
-
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size)
-
     print("Setting up device...")
     # Set device
     if args.use_cpu:
@@ -111,6 +96,21 @@ def main():
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+
+    # Split annotations
+    split_annotations('ASDor_wav/train_annotations.csv', os.path.join(output_dir, "tr_annotations.csv"), 
+        os.path.join(output_dir, "cv_annotations.csv"), train_ratio=0.82, random_state=args.seed)
+
+    # Create datasets
+    train_dataset = AudioDataset4raw(os.path.join(output_dir, "tr_annotations.csv"), augment=args.use_augmentation, device=device)
+    valid_dataset = AudioDataset4raw(os.path.join(output_dir, "cv_annotations.csv"), augment=False, device=device)
+
+    print(f"Training set size: {len(train_dataset)}")
+    print(f"Validation set size: {len(valid_dataset)}")
+
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size)
 
     # Print GPU info if using CUDA
     if device.type == 'cuda':
