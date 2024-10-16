@@ -7,6 +7,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from src.training_process import WarmupCosineSchedule
 from tqdm import tqdm
 import logging
 import random
@@ -21,16 +22,22 @@ import json
 def parse_args():
     parser = argparse.ArgumentParser(description="Audio Classification Training")
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training (default: 8)')
-    parser.add_argument('--initial_lr', type=float, default=5e-5, help='Initial learning rate for Cosine Annealing (default: 5e-5)')
-    parser.add_argument('--final_lr', type=float, default=1e-7, help='Final learning rate for Cosine Annealing (default: 1e-7)')
+    parser.add_argument('--initial_lr', type=float, default=1e-4, help='Initial learning rate for Cosine Annealing (default: 1e-4)')
+    parser.add_argument('--final_lr', type=float, default=1e-6, help='Final learning rate for Cosine Annealing (default: 1e-6)')
+    parser.add_argument('--warmup_epochs', type=int, default=3, help='Number of epochs for warmup (default: 3)')
     parser.add_argument('--num_epochs', type=int, default=100, help='Number of epochs to train (default: 100)')
     parser.add_argument('--model_path', type=str, default='BEATs_iter3_plus_AS20K.pt', help='Pre-trained model path (default: BEATs_iter3_plus_AS20K.pt)')
     parser.add_argument('--num_labels', type=int, default=3, help='Number of classification labels (default: 3)')
     parser.add_argument('--dropout_rate', type=float, default=0.1, help='Dropout rate (default: 0.1)')
-    parser.add_argument('--l1_reg', type=float, default=0.0001, help='L1 regularization (default: 0.0001)')
-    parser.add_argument('--l2_reg', type=float, default=0.0001, help='L2 regularization (default: 0.0001)')
+    parser.add_argument('--l1_reg', type=float, default=0.0000, help='L1 regularization (default: 0.0000)')
+    parser.add_argument('--l2_reg', type=float, default=0.0005, help='L2 regularization (default: 0.0005)')
+    parser.add_argument('--hidden_dim', type=int, default=256, help='Dimension of hidden layer (default: 256)')
     parser.add_argument('--freeze_encoder', action='store_true', help='Freeze encoder weights (default: False)')
     parser.add_argument('--use_augmentation', action='store_true', help='Use audio augmentation (default: False)')
+    parser.add_argument('--augment_type', type=str, default='None', 
+                        help='Specify augmentation type (default: None, which means random augmentation if use_augmentation is True)')
+    parser.add_argument('--augment_prob', type=float, default=0.5, 
+                        help='Probability of applying augmentation to a sample (default: 0.5)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility (default: 42)')
     parser.add_argument('--output_dir', type=str, default='', help='Custom output directory name (default: timestamp-based directory)')
     parser.add_argument('--use_cpu', action='store_true', help='Force using CPU even if GPU is available (default: False)')
@@ -102,8 +109,14 @@ def main():
         os.path.join(output_dir, "cv_annotations.csv"), train_ratio=0.82, random_state=args.seed)
 
     # Create datasets
-    train_dataset = AudioDataset4raw(os.path.join(output_dir, "tr_annotations.csv"), augment=args.use_augmentation, device=device)
-    valid_dataset = AudioDataset4raw(os.path.join(output_dir, "cv_annotations.csv"), augment=False, device=device)
+    train_dataset = AudioDataset4raw(os.path.join(output_dir, "tr_annotations.csv"), 
+                                     augment=args.use_augmentation, 
+                                     augment_type=args.augment_type,
+                                     augment_prob=args.augment_prob,
+                                     device=device)
+    valid_dataset = AudioDataset4raw(os.path.join(output_dir, "cv_annotations.csv"), 
+                                     augment=False, 
+                                     device=device)
 
     print(f"Training set size: {len(train_dataset)}")
     print(f"Validation set size: {len(valid_dataset)}")
@@ -123,7 +136,7 @@ def main():
     # 記錄模型架構
     log_file.write("Model Architecture:\n")
     model = BEATsForAudioClassification(num_labels=args.num_labels, dropout_rate=args.dropout_rate, 
-        l1_reg=args.l1_reg, l2_reg=args.l2_reg, freeze_encoder=args.freeze_encoder).to(device)
+        l1_reg=args.l1_reg, l2_reg=args.l2_reg, hidden_dim=args.hidden_dim, freeze_encoder=args.freeze_encoder).to(device)
     model.initialize_beats(args.model_path, device)
     model = model.to(device)
     log_file.write(str(model) + "\n\n")
@@ -136,7 +149,10 @@ def main():
     print("Setting up optimizer, loss function and learning rate scheduler...")
     optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.initial_lr)
     criterion = nn.CrossEntropyLoss()
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=args.final_lr)
+    #scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=args.final_lr)
+    total_steps = len(train_loader) * args.num_epochs
+    warmup_steps = len(train_loader) * args.warmup_epochs
+    scheduler = WarmupCosineSchedule(optimizer, warmup_steps, total_steps, initial_lr=args.initial_lr, final_lr=args.final_lr)
 
     print("Starting training loop...")
     best_model_info = {
@@ -150,11 +166,9 @@ def main():
         epoch_start_time = datetime.now()
 
         print(f"\nEpoch {epoch+1}/{args.num_epochs}")
-        train_loss, train_accuracy = TP.train(model, train_loader, optimizer, criterion, device, epoch+1, log_file)
+        train_loss, train_accuracy = TP.train(model, train_loader, optimizer, criterion, device, epoch+1, log_file, scheduler)
         print("Evaluating...")
         eval_loss, eval_accuracy = TP.evaluate(model, valid_loader, criterion, device, log_file)
-        
-        scheduler.step()
         
         # Get and print current learning rate
         current_lr = optimizer.param_groups[0]['lr']

@@ -77,11 +77,14 @@ def split_annotations(csv_path, train_csv_path, valid_csv_path, train_ratio=0.82
         print(dataset['label'].value_counts(normalize=True))
 
 class AudioDataset4raw(Dataset):
-    def __init__(self, annotations_file, target_sample_rate=16000, target_length=10, augment=True, device='cuda'):
+    def __init__(self, annotations_file, target_sample_rate=16000, target_length=10, 
+                 augment=True, augment_type='None', augment_prob=0.5, device='cuda'):
         self.audio_labels = pd.read_csv(annotations_file)
         self.target_sample_rate = target_sample_rate
         self.target_length = target_sample_rate * target_length
         self.augment = augment
+        self.augment_type = augment_type
+        self.augment_prob = augment_prob
         self.label_mapping = {"ok": 0, "ng": 1, "other": 2}
         self.device = device
 
@@ -127,18 +130,29 @@ class AudioDataset4raw(Dataset):
         return waveform
 
     def apply_augmentation(self, waveform):
-        if random.random() < 0.5:
+        if not self.augment:
             return waveform
 
-        augmentation_choice = random.choice([
-            self.time_stretching,
-            self.pitch_shifting,
-            self.dynamic_range_compression,
-            self.add_gaussian_noise,
-            self.adjust_volume
-        ])
+        if random.random() < self.augment_prob:
+            if self.augment_type.lower() == 'none':
+                # 如果没有指定增强类型，随机选择一种
+                augmentation_choice = random.choice([
+                    self.time_stretching,
+                    self.pitch_shifting,
+                    self.dynamic_range_compression,
+                    self.add_gaussian_noise,
+                    self.adjust_volume
+                ])
+            else:
+                # 使用指定的增强类型
+                augmentation_choice = getattr(self, self.augment_type, None)
+                if augmentation_choice is None:
+                    print(f"Warning: Specified augmentation type '{self.augment_type}' not found. No augmentation applied.")
+                    return waveform
 
-        return augmentation_choice(waveform)
+            return augmentation_choice(waveform)
+        else : 
+            return waveform
 
     def time_stretching(self, waveform, stretch_factor=None):
         if stretch_factor is None:

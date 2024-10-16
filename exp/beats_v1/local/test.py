@@ -68,7 +68,7 @@ def main():
     print(f"Using device: {device}")
     
     # Load the trained model
-    model = BEATsForAudioClassification(num_labels=args.num_labels).to(device)
+    model = BEATsForAudioClassification(num_labels=args.num_labels, hidden_dim=64).to(device)
     model, checkpoint = model.load_model(args.model_path, device)
     
     # Prepare the test dataset

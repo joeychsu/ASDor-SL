@@ -36,15 +36,16 @@ class TemporalConvNet(nn.Module):
         return x.mean(dim=2)
 
 class BEATsForAudioClassification(nn.Module):
-    def __init__(self, num_labels=3, dropout_rate=0.1, l1_reg=0.01, l2_reg=0.01, freeze_encoder=True):
+    def __init__(self, num_labels=3, dropout_rate=0.1, l1_reg=0.01, l2_reg=0.01, hidden_dim=256, freeze_encoder=True):
         super().__init__()
         self.cfg = None
         self.beats = None
-        self.tcn = TemporalConvNet(768, hidden_dim=512)
+        self.tcn = TemporalConvNet(768, hidden_dim=hidden_dim)
         self.dropout1 = nn.Dropout(dropout_rate)
-        self.fc1 = nn.Linear(512, num_labels)
+        self.fc1 = nn.Linear(hidden_dim, num_labels)
         self.l1_reg = l1_reg
         self.l2_reg = l2_reg
+        self.hidden_dim = hidden_dim
         self.freeze_encoder = freeze_encoder
 
     def initialize_beats(self, model_path, device):
@@ -100,6 +101,7 @@ class BEATsForAudioClassification(nn.Module):
             'dropout1_state_dict': self.dropout1.state_dict(),
             'l1_reg': self.l1_reg,
             'l2_reg': self.l2_reg,
+            'hidden_dim': self.hidden_dim,  # 添加 hidden_dim
             'freeze_encoder': self.freeze_encoder
         }
 
@@ -127,9 +129,11 @@ class BEATsForAudioClassification(nn.Module):
         checkpoint = torch.load(load_path, map_location=device)
         
         num_labels = checkpoint['fc1_state_dict']['weight'].size(0)
+        hidden_dim = checkpoint['hidden_dim']  # 从checkpoint中获取hidden_dim
         model = cls(num_labels=num_labels, 
                     l1_reg=checkpoint['l1_reg'], 
                     l2_reg=checkpoint['l2_reg'], 
+                    hidden_dim=hidden_dim,  # 使用保存的hidden_dim
                     freeze_encoder=checkpoint['freeze_encoder'])
 
         model.cfg = checkpoint['beats_config']
@@ -144,3 +148,4 @@ class BEATsForAudioClassification(nn.Module):
         
         print(f"Model loaded from {load_path}")
         return model, checkpoint
+
