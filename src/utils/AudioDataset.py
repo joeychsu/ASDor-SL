@@ -29,6 +29,9 @@ def create_annotations_csv_by_folder(wav_dir, output_csv):
                 elif "verify_ng_wav" in relative_path:
                     file_list.append(full_path)
                     labels.append("ng")
+                elif "verify_ok_wav" in relative_path:
+                    file_list.append(full_path)
+                    labels.append("ok")
                 elif "bg_wav" in relative_path:
                     file_list.append(full_path)
                     labels.append("other")
@@ -77,7 +80,7 @@ def split_annotations(csv_path, train_csv_path, valid_csv_path, train_ratio=0.82
         print(dataset['label'].value_counts(normalize=True))
 
 class AudioDataset4raw(Dataset):
-    def __init__(self, annotations_file, target_sample_rate=16000, target_length=10, 
+    def __init__(self, annotations_file, target_sample_rate=16000, target_length=5, 
                  augment=True, augment_type='None', augment_prob=0.5, device='cuda'):
         self.audio_labels = pd.read_csv(annotations_file)
         self.target_sample_rate = target_sample_rate
