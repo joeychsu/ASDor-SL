@@ -27,6 +27,8 @@ def parse_args():
                         help='Use CPU for testing')
     parser.add_argument('--prefix', type=str, default='None',
                         help='prefix of results file name')
+    parser.add_argument('--seed', type=int, default=905,
+                        help='Random seed for reproducibility')
     return parser.parse_args()
 
 def extract_features(model, data_loader, device):
@@ -53,11 +55,15 @@ def extract_features(model, data_loader, device):
     
     return features, labels, all_files
 
-def select_enrollment_samples(features, labels, files, n_per_class):
+def select_enrollment_samples(features, labels, files, n_per_class, random_state):
     """為每個類別選擇註冊樣本"""
     unique_labels = torch.unique(labels)
     enrollment_indices = []
     test_indices = []
+    
+    # 設定隨機種子
+    rng = torch.Generator()
+    rng.manual_seed(random_state)
     
     for label in unique_labels:
         class_indices = (labels == label).nonzero().view(-1)
@@ -65,7 +71,7 @@ def select_enrollment_samples(features, labels, files, n_per_class):
         if len(class_indices) <= n_per_class:
             enroll_idx = class_indices
         else:
-            perm = torch.randperm(len(class_indices))
+            perm = torch.randperm(len(class_indices), generator=rng)
             enroll_idx = class_indices[perm[:n_per_class]]
         
         test_idx = torch.tensor([i for i in class_indices if i not in enroll_idx])
@@ -88,58 +94,6 @@ def calculate_center_features(features, labels, enrollment_indices):
     
     return center_features
 
-def normalize_scores(raw_scores, method='snorm', enrollment_scores=None):
-    """正規化分數，增加了錯誤處理
-    
-    Parameters:
-        raw_scores: 原始分數向量
-        method: 'znorm', 'tnorm', 或 'snorm'
-        enrollment_scores: 用於計算正規化參數的註冊分數
-        
-    Returns:
-        normalized_scores: 正規化後的分數
-    """
-    if method == 'raw':
-        return raw_scores
-    
-    # 確保輸入是有效的
-    raw_scores = torch.as_tensor(raw_scores)
-    if enrollment_scores is not None:
-        enrollment_scores = torch.as_tensor(enrollment_scores)
-    
-    # 初始化結果
-    z_scores = raw_scores
-    t_scores = raw_scores
-    
-    if method in ['znorm', 'snorm'] and enrollment_scores is not None:
-        # 確保有足夠的樣本來計算統計量
-        if len(enrollment_scores) > 1:
-            z_mean = enrollment_scores.mean()
-            z_std = enrollment_scores.std()
-            # 避免除以零，使用較小的閾值
-            if z_std > 1e-8:
-                z_scores = (raw_scores - z_mean) / z_std
-            else:
-                z_scores = raw_scores - z_mean
-    
-    if method in ['tnorm', 'snorm']:
-        # 確保有足夠的分數來計算統計量
-        if len(raw_scores) > 1:
-            t_mean = raw_scores.mean()
-            t_std = raw_scores.std()
-            # 避免除以零
-            if t_std > 1e-8:
-                t_scores = (raw_scores - t_mean) / t_std
-            else:
-                t_scores = raw_scores - t_mean
-    
-    if method == 'znorm':
-        return z_scores
-    elif method == 'tnorm':
-        return t_scores
-    else:  # snorm
-        return 0.5 * (z_scores + t_scores)
-
 def evaluate_classification(features, labels, center_features, enrollment_indices, test_indices):
     """使用原始餘弦相似度進行分類評估"""
     correct = 0
@@ -148,20 +102,26 @@ def evaluate_classification(features, labels, center_features, enrollment_indice
     ground_truths = []
     all_scores = []
     
+    # 統計每個類別的正確數量與總數
+    class_correct = {}
+    class_total = {}
+
     for idx in test_indices:
         test_feature = features[idx]
         true_label = labels[idx].item()
         
+        # 初始化類別的統計字典
+        if true_label not in class_correct:
+            class_correct[true_label] = 0
+            class_total[true_label] = 0
+        
         # 計算與所有類別中心的相似度
         class_scores = {}
-        
         for label, center in center_features.items():
-            # 計算與中心的相似度
             similarity = torch.nn.functional.cosine_similarity(
                 test_feature.unsqueeze(0),
                 center.unsqueeze(0)
             ).item()
-            
             class_scores[label] = {
                 'raw': similarity,
                 'score': similarity  # 使用原始分數作為最終分數
@@ -170,15 +130,22 @@ def evaluate_classification(features, labels, center_features, enrollment_indice
         # 使用原始相似度進行預測
         pred_label = max(class_scores.items(), key=lambda x: x[1]['score'])[0]
         
+        # 更新總數和正確數
+        class_total[true_label] += 1
         if pred_label == true_label:
             correct += 1
+            class_correct[true_label] += 1
         
         predictions.append(pred_label)
         ground_truths.append(true_label)
         all_scores.append(class_scores)
     
+    # 計算每個類別的準確率
+    class_accuracy = {label: class_correct[label] / class_total[label] 
+                      for label in class_total}
+    
     accuracy = correct / total
-    return accuracy, predictions, ground_truths, all_scores
+    return accuracy, predictions, ground_truths, all_scores, class_accuracy
 
 def calculate_quality_metrics(features, labels):
     """計算特徵質量指標，使用餘弦相似度
@@ -220,21 +187,28 @@ def calculate_quality_metrics(features, labels):
         'inter_class_sim': inter_class_sim.item()
     }
 
-def analyze_features(features, labels, files, n_per_class, output_dir, prefix='None'):
+def analyze_features(features, labels, files, n_per_class, output_dir, random_state, prefix='None'):
     """進行特徵分析和分類評估 (只使用原始分數)"""
     # 選擇註冊樣本
-    enrollment_indices, test_indices = select_enrollment_samples(features, labels, files, n_per_class)
+    enrollment_indices, test_indices = select_enrollment_samples(features, labels, files, n_per_class, random_state)
     
     # 計算類別中心
     center_features = calculate_center_features(features, labels, enrollment_indices)
     
     # 評估分類效果
-    accuracy, predictions, ground_truths, all_scores = evaluate_classification(
+    accuracy, predictions, ground_truths, all_scores, class_accuracy = evaluate_classification(
         features, labels, center_features, enrollment_indices, test_indices
     )
     
     # 計算質量指標
     quality_metrics = calculate_quality_metrics(features, labels)
+    
+    # 保存類別準確率報告
+    with open(os.path.join(output_dir, f'{prefix}_class_accuracy.txt'), 'w') as f:
+        f.write("Class-wise Accuracy Report\n")
+        f.write("===========================\n")
+        for label, acc in class_accuracy.items():
+            f.write(f"Class {label}: Accuracy = {acc:.4f}\n")
     
     # 生成分類結果報告
     results = []
@@ -301,6 +275,7 @@ def analyze_features(features, labels, files, n_per_class, output_dir, prefix='N
     
     return {
         'accuracy': accuracy,
+        'class_accuracy': class_accuracy,  # 返回每類別準確率
         'n_enrollment_samples': n_per_class,
         'n_test_samples': len(test_indices),
         'n_classes': len(center_features),
@@ -330,13 +305,13 @@ def main():
     print("Extracting features...")
     features, labels, files = extract_features(model, test_loader, device)
     
-    results = {}
-    
+    # 傳遞隨機種子進行分析
     print(f"\nPerforming {args.prefix} analysis...")
     results = analyze_features(
         features, labels, files,
         n_per_class=args.n_enrollment,
         output_dir=args.output_dir,
+        random_state=args.seed, 
         prefix=args.prefix
     )
     
@@ -347,13 +322,15 @@ def main():
         f.write(f"Number of enrollment samples per class: {args.n_enrollment}\n")
         f.write(f"Total number of classes: {results['n_classes']}\n")
         f.write(f"Total number of test samples: {results['n_test_samples']}\n\n")
-        f.write("Evaluation Metrics by Method:\n")
-
-        f.write(f"\n{args.prefix}:\n")
-        f.write(f"  Accuracy: {results['accuracy']:.4f}\n")
-        f.write(f"  Quality Ratio: {results['quality_ratio']:.4f}\n")
-        f.write(f"  Intra-class Similarity: {results['intra_class_sim']:.4f}\n")
-        f.write(f"  Inter-class Similarity: {results['inter_class_sim']:.4f}\n")
+        f.write("Evaluation Metrics:\n")
+        f.write(f"Overall Accuracy: {results['accuracy']:.4f}\n")
+        f.write(f"Quality Ratio: {results['quality_ratio']:.4f}\n")
+        f.write(f"Intra-class Similarity: {results['intra_class_sim']:.4f}\n")
+        f.write(f"Inter-class Similarity: {results['inter_class_sim']:.4f}\n\n")
+        f.write("Class-wise Accuracy:\n")
+        for label, acc in results['class_accuracy'].items():
+            f.write(f"  Class {label}: Accuracy = {acc:.4f}\n")
+        f.write("\n\n")
 
     print("\nResults Summary:")
     print(f"\n{args.prefix}:")
@@ -361,6 +338,9 @@ def main():
     print(f"  Quality Ratio: {results['quality_ratio']:.4f}")
     print(f"  Intra-class Similarity: {results['intra_class_sim']:.4f}")
     print(f"  Inter-class Similarity: {results['inter_class_sim']:.4f}")
+    print(f"  Class-wise Accuracy:")
+    for label, acc in results['class_accuracy'].items():
+        print(f"   - Class {label}: Accuracy = {acc:.4f}")
 
     print(f"\nResults saved in {args.output_dir}")
 
