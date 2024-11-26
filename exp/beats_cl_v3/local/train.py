@@ -16,33 +16,36 @@ import sys
 import json
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Audio Contrastive Learning Training")
+    parser = argparse.ArgumentParser(
+        description="Audio Contrastive Learning Training",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter  # 自動補上默認值
+    )
     parser.add_argument('--batch_size', type=int, default=32, 
-                        help='Batch size for training (default: 32)')
+                        help='Batch size for training')
     parser.add_argument('--initial_lr', type=float, default=1e-4, 
-                        help='Initial learning rate (default: 1e-4)')
+                        help='Initial learning rate')
     parser.add_argument('--final_lr', type=float, default=1e-6, 
-                        help='Final learning rate (default: 1e-6)')
+                        help='Final learning rate')
     parser.add_argument('--l1_reg', type=float, default=0.00,
-                        help='L1 regularization weight (default: 0.00)')
+                        help='L1 regularization weight')
     parser.add_argument('--l2_reg', type=float, default=0.01,
-                        help='L2 regularization weight (default: 0.01)')
+                        help='L2 regularization weight')
     parser.add_argument('--warmup_epochs', type=int, default=10, 
-                        help='Number of epochs for warmup (default: 10)')
+                        help='Number of epochs for warmup')
     parser.add_argument('--num_epochs', type=int, default=100, 
-                        help='Number of epochs to train (default: 100)')
+                        help='Number of epochs to train')
     parser.add_argument('--model_path', type=str, default='BEATs_iter3_plus_AS20K.pt', 
                         help='Pre-trained model path')
     parser.add_argument('--projection_dim', type=int, default=128, 
-                        help='Dimension of projection space (default: 128)')
+                        help='Dimension of projection space')
     parser.add_argument('--hidden_dim', type=int, default=512, 
-                        help='Hidden dimension for projection (default: 512)')
+                        help='Hidden dimension for projection')
     parser.add_argument('--temperature', type=float, default=0.2, 
-                        help='Temperature parameter for contrastive loss (default: 0.2)')
+                        help='Temperature parameter for contrastive loss')
     parser.add_argument('--freeze_encoder', action='store_true', 
-                        help='Freeze encoder weights (default: False)')
+                        help='Freeze encoder weights')
     parser.add_argument('--use_augmentation', action='store_true', 
-                        help='Use audio augmentation (default: False)')
+                        help='Use audio augmentation')
     parser.add_argument('--augment_type', type=str, default='None',
                         help='Specify augmentation type')
     parser.add_argument('--augment_prob', type=float, default=0.5,
@@ -53,10 +56,12 @@ def parse_args():
                         help='Path to training CSV file')
     parser.add_argument('--valid_csv', type=str, default='results/cv_annotations.csv',
                         help='Path to validation CSV file')
-    parser.add_argument('--output_dir', type=str, default='',
-                        help='Custom output directory name')
+    parser.add_argument('--output_dir', type=str, required=True,
+                        help='Custom output directory name (required)')
     parser.add_argument('--use_cpu', action='store_true',
                         help='Force using CPU even if GPU is available')
+    parser.add_argument('--projection_type', type=str, default='ConvProjection',
+                        help='Projection type for the model')
     return parser.parse_args()
 
 def set_seed(seed):
@@ -227,7 +232,8 @@ def main():
         temperature=args.temperature,
         freeze_encoder=args.freeze_encoder,
         l1_reg=args.l1_reg,
-        l2_reg=args.l2_reg
+        l2_reg=args.l2_reg,
+        projection_type=args.projection_type
     ).to(device)
     
     # 初始化BEATs

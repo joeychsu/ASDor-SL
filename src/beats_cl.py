@@ -145,12 +145,33 @@ class SupConLoss(nn.Module):
 
 class BEATsContrastive(nn.Module):
     def __init__(self, projection_dim=128, hidden_dim=512, temperature=0.07, 
-                 freeze_encoder=True, l1_reg=0.01, l2_reg=0.01):  # 添加正則化參數
+                 freeze_encoder=True, l1_reg=0.01, l2_reg=0.01, projection_type="ConvProjection"):
+        """
+        初始化 BEATsContrastive 模型
+        
+        Args:
+            projection_dim (int): 投影維度
+            hidden_dim (int): 隱藏層維度
+            temperature (float): 對比損失的溫度參數
+            freeze_encoder (bool): 是否凍結編碼器
+            l1_reg (float): L1 正則化權重
+            l2_reg (float): L2 正則化權重
+            projection_type (str): 投影類型，可選值 ['ConvProjection', 'SimpleFewShotProjection', 'JustMeanProjection']
+        """
         super().__init__()
         self.cfg = None
         self.beats = None
-        self.projection = ConvProjection(768, projection_dim, hidden_dim)
-        #self.projection = SimpleFewShotProjection()
+        
+        # 根據 projection_type 選擇不同的投影
+        if projection_type == "ConvProjection":
+            self.projection = ConvProjection(768, projection_dim, hidden_dim)
+        elif projection_type == "SimpleFewShotProjection":
+            self.projection = SimpleFewShotProjection(768, projection_dim, hidden_dim)
+        elif projection_type == "JustMeanProjection":
+            self.projection = JustMeanProjection(768, projection_dim, hidden_dim)
+        else:
+            raise ValueError(f"Unsupported projection_type: {projection_type}")
+
         self.contrastive_loss = SupConLoss(temperature)
         self.freeze_encoder = freeze_encoder
         self.l1_reg = l1_reg

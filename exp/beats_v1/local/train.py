@@ -22,8 +22,8 @@ import json
 def parse_args():
     parser = argparse.ArgumentParser(description="Audio Classification Training")
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training (default: 8)')
-    parser.add_argument('--initial_lr', type=float, default=1e-4, help='Initial learning rate for Cosine Annealing (default: 1e-4)')
-    parser.add_argument('--final_lr', type=float, default=1e-6, help='Final learning rate for Cosine Annealing (default: 1e-6)')
+    parser.add_argument('--initial_lr', type=float, default=1e-5, help='Initial learning rate for Cosine Annealing (default: 1e-5)')
+    parser.add_argument('--final_lr', type=float, default=1e-7, help='Final learning rate for Cosine Annealing (default: 1e-7)')
     parser.add_argument('--warmup_epochs', type=int, default=3, help='Number of epochs for warmup (default: 3)')
     parser.add_argument('--num_epochs', type=int, default=100, help='Number of epochs to train (default: 100)')
     parser.add_argument('--model_path', type=str, default='BEATs_iter3_plus_AS20K.pt', help='Pre-trained model path (default: BEATs_iter3_plus_AS20K.pt)')
@@ -39,6 +39,8 @@ def parse_args():
     parser.add_argument('--augment_prob', type=float, default=0.5, 
                         help='Probability of applying augmentation to a sample (default: 0.5)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility (default: 42)')
+    parser.add_argument('--train_csv', type=str, default='results/tr_annotations.csv', help='Path to the train CSV file (default: results/tr_annotations.csv)')
+    parser.add_argument('--valid_csv', type=str, default='results/cv_annotations.csv', help='Path to the train CSV file (default: results/cv_annotations.csv)')
     parser.add_argument('--output_dir', type=str, default='', help='Custom output directory name (default: timestamp-based directory)')
     parser.add_argument('--use_cpu', action='store_true', help='Force using CPU even if GPU is available (default: False)')
     return parser.parse_args()
@@ -104,17 +106,13 @@ def main():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Split annotations
-    split_annotations('ASDor_wav/train_annotations.csv', os.path.join(output_dir, "tr_annotations.csv"), 
-        os.path.join(output_dir, "cv_annotations.csv"), train_ratio=0.82, random_state=args.seed)
-
     # Create datasets
-    train_dataset = AudioDataset4raw(os.path.join(output_dir, "tr_annotations.csv"), 
+    train_dataset = AudioDataset4raw(args.train_csv, 
                                      augment=args.use_augmentation, 
                                      augment_type=args.augment_type,
                                      augment_prob=args.augment_prob,
                                      device=device)
-    valid_dataset = AudioDataset4raw(os.path.join(output_dir, "cv_annotations.csv"), 
+    valid_dataset = AudioDataset4raw(args.valid_csv, 
                                      augment=False, 
                                      device=device)
 

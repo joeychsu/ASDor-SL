@@ -17,6 +17,8 @@ def parse_args():
                         help='Path to the trained model')
     parser.add_argument('--test_csv', type=str, required=True,
                         help='Path to the test CSV file')
+    parser.add_argument('--class_vector_pt', type=str, required=True,
+                        help='class vector for enroll')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for testing')
     parser.add_argument('--n_enrollment', type=int, default=5,
@@ -55,30 +57,42 @@ def extract_features(model, data_loader, device):
     
     return features, labels, all_files
 
-def select_enrollment_samples(features, labels, files, n_per_class, random_state):
-    """為每個類別選擇註冊樣本"""
-    unique_labels = torch.unique(labels)
+def select_enrollment_samples(features, labels, files, n_per_class, random_state, target_labels):
+    """
+    為指定的類別選擇註冊樣本，其他剩餘樣本都放入 test_indices
+    - features: 特徵向量
+    - labels: 標籤 (str 或 int)
+    - files: 檔案名稱
+    - n_per_class: 每個類別的註冊樣本數
+    - random_state: 隨機種子
+    - target_labels: 要處理的類別列表 (列表形式)
+    """
     enrollment_indices = []
-    test_indices = []
-    
-    # 設定隨機種子
+    all_indices = set(range(len(labels)))  # 所有樣本索引
     rng = torch.Generator()
     rng.manual_seed(random_state)
-    
-    for label in unique_labels:
-        class_indices = (labels == label).nonzero().view(-1)
+
+    for target_label in target_labels:
+        # 找到符合該類別的所有索引
+        class_indices = (labels == target_label).nonzero().view(-1)
         
+        if len(class_indices) == 0:
+            print(f"Warning: No samples found for label {target_label}")
+            continue
+        
+        # 隨機抽取 n_per_class 作為 enrollment
         if len(class_indices) <= n_per_class:
             enroll_idx = class_indices
         else:
             perm = torch.randperm(len(class_indices), generator=rng)
             enroll_idx = class_indices[perm[:n_per_class]]
         
-        test_idx = torch.tensor([i for i in class_indices if i not in enroll_idx])
-        
         enrollment_indices.extend(enroll_idx.tolist())
-        test_indices.extend(test_idx.tolist())
-    
+
+    # 剩餘的索引作為 test_indices
+    enrollment_set = set(enrollment_indices)
+    test_indices = list(all_indices - enrollment_set)
+
     return enrollment_indices, test_indices
 
 def calculate_center_features(features, labels, enrollment_indices):
@@ -187,19 +201,50 @@ def calculate_quality_metrics(features, labels):
         'inter_class_sim': inter_class_sim.item()
     }
 
-def analyze_features(features, labels, files, n_per_class, output_dir, random_state, prefix='None'):
+def mean_current_center_features(data1, data2):
+    # 初始化結果字典
+    average_result = {}
+
+    # 對每個 key 分別計算平均值
+    for key in data1.keys():
+        tensor_list = []
+        
+        # 添加有效的張量（沒有 NaN）
+        if not torch.isnan(data1[key]).any():
+            tensor_list.append(data1[key])
+        if not torch.isnan(data2[key]).any():
+            tensor_list.append(data2[key])
+        
+        # 如果有有效的張量，計算平均值
+        if tensor_list:
+            average_result[key] = torch.mean(torch.stack(tensor_list), dim=0)
+        else:
+            average_result[key] = None  # 如果全是 NaN，可以選擇用 None 或其他值標示
+
+    # 輸出結果
+    for key, value in average_result.items():
+        if value is not None:
+            print(f"Key {key}: Average computed, shape {value.shape}")
+        else:
+            print(f"Key {key}: No valid data, result is None")
+    return average_result
+
+def analyze_features(features, labels, files, n_per_class, class_vector_pt_path, output_dir, random_state, prefix='None'):
     """進行特徵分析和分類評估 (只使用原始分數)"""
     # 選擇註冊樣本
-    enrollment_indices, test_indices = select_enrollment_samples(features, labels, files, n_per_class, random_state)
+    target_labels = [0] # {"ok": 0, "ng": 1, "other": 2} can found on src/utils/AudioDataset.py
+    enrollment_indices, test_indices = select_enrollment_samples(features, labels, files, n_per_class, random_state, target_labels)
     
     # 計算類別中心
-    center_features = calculate_center_features(features, labels, enrollment_indices)
+    current_center_features = calculate_center_features(features, labels, enrollment_indices)
+    center_features = torch.load(class_vector_pt_path)
+    center_features = mean_current_center_features(current_center_features, center_features)
     
     # 評估分類效果
     accuracy, predictions, ground_truths, all_scores, class_accuracy = evaluate_classification(
         features, labels, center_features, enrollment_indices, test_indices
     )
-    
+
     # 計算質量指標
     quality_metrics = calculate_quality_metrics(features, labels)
     
@@ -310,6 +355,7 @@ def main():
     results = analyze_features(
         features, labels, files,
         n_per_class=args.n_enrollment,
+        class_vector_pt_path=args.class_vector_pt,
         output_dir=args.output_dir,
         random_state=args.seed, 
         prefix=args.prefix
