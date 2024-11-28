@@ -1,11 +1,14 @@
 
-result_name_list="                    BEATs_iter3_plus_AS2M_v3_ConvProjection             BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e1000"
-result_name_list="${result_name_list} BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e2000 BEATs_iter3_plus_AS2M_v3_ConvProjection_e1000"
-result_name_list="${result_name_list} BEATs_iter3_plus_AS2M_v3_ConvProjection_e2000       BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e3000"
+result_name_list="                    BEATs_iter3_plus_AS2M_v3_ConvProjection                   BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e1000"
+result_name_list="${result_name_list} BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e2000       BEATs_iter3_plus_AS2M_v3_ConvProjection_e1000"
+result_name_list="${result_name_list} BEATs_iter3_plus_AS2M_v3_ConvProjection_e2000             BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e3000"
+result_name_list="${result_name_list} BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e1000_hd512 BEATs_iter3_plus_AS2M_v3_ConvProjection_aug05_e1000_hd1024"
+result_name_list="BEATs_iter3_plus_AS2M_v3_ConvProjection"
 
 n_enrollment=0
-test_sets="test_annotations_v3_1 test_annotations_v3_2 test_annotations_v3_3"
-
+test_sets="test_annotations_v3_1 test_annotations_v3_2 test_annotations_v3_3 test_annotations_v3"
+test_sets="test_annotations_v3_2"
+:<<BLOCK
 for result_name in ${result_name_list} ; do
     results_path="results/${result_name}"
     python local/extract_class_vector.py --model_path ${results_path}/best_model.pth \
@@ -13,13 +16,13 @@ for result_name in ${result_name_list} ; do
       --output_dir ${results_path}
 done
 # --use_cpu
-
+BLOCK
 for result_name in ${result_name_list} ; do
     results_path="results/${result_name}"
     for test_set in ${test_sets} ; do
         echo -n "" > ${results_path}/${test_set}_total_classification_summary.txt
-        for random_seed in `seq 901 910` ; do
-            python local/test.py --seed ${random_seed} \
+        for random_seed in `seq 901 902` ; do
+            python local/test.py --seed ${random_seed} --ng_scale 1.6 \
               --class_vector_pt ${results_path}/enroll_vectors.pt --prefix "${test_set}" \
                 --model_path ${results_path}/best_model.pth --n_enrollment ${n_enrollment} \
                 --test_csv "ASDor_wav/${test_set}.csv" --output_dir ${results_path}

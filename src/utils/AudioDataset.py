@@ -81,7 +81,7 @@ def split_annotations(csv_path, train_csv_path, valid_csv_path, train_ratio=0.82
 
 class AudioDataset4raw(Dataset):
     def __init__(self, annotations_file, target_sample_rate=16000, target_length=5, 
-                 augment=True, augment_type='None', augment_prob=0.5, device='cuda'):
+                 augment=True, augment_type='None', augment_prob=0.5, device='cuda', random_cut=False):
         self.audio_labels = pd.read_csv(annotations_file)
         self.target_sample_rate = target_sample_rate
         self.target_length = target_sample_rate * target_length
@@ -90,6 +90,7 @@ class AudioDataset4raw(Dataset):
         self.augment_prob = augment_prob
         self.label_mapping = {"ok": 0, "ng": 1, "other": 2}
         self.device = device
+        self.random_cut = random_cut
 
         # 初始化转换器
         self.spectrogram = T.Spectrogram(n_fft=400, power=None)
@@ -124,8 +125,12 @@ class AudioDataset4raw(Dataset):
 
     def adjust_length(self, waveform):
         if waveform.shape[1] > self.target_length:
-            # 隨機裁剪
-            start = random.randint(0, waveform.shape[1] - self.target_length)
+            if self.random_cut:
+                # 隨機裁剪
+                start = random.randint(0, waveform.shape[1] - self.target_length)
+            else:
+                # 固定裁剪 (從開始處)
+                start = 0
             waveform = waveform[:, start:start + self.target_length]
         elif waveform.shape[1] < self.target_length:
             # 填充

@@ -31,6 +31,9 @@ def parse_args():
                         help='prefix of results file name')
     parser.add_argument('--seed', type=int, default=905,
                         help='Random seed for reproducibility')
+    parser.add_argument('--ng_scale', type=float, default=1.0,
+                        help='Scaling factor for adjusting NG (No Good) sample weights. '
+                             'Recommended range is 1.0 to 2.0.')
     return parser.parse_args()
 
 def extract_features(model, data_loader, device):
@@ -108,8 +111,30 @@ def calculate_center_features(features, labels, enrollment_indices):
     
     return center_features
 
-def evaluate_classification(features, labels, center_features, enrollment_indices, test_indices):
-    """使用原始餘弦相似度進行分類評估"""
+def evaluate_classification(features, labels, center_features, enrollment_indices, test_indices, class_weights):
+    """
+    使用原始餘弦相似度進行分類評估，並支持不同類別權重。
+    
+    Args:
+        features: 測試特徵。
+        labels: 測試樣本的真實標籤。
+        center_features: 每個類別的中心特徵。
+        enrollment_indices: 訓練集中使用的樣本索引。
+        test_indices: 測試集中使用的樣本索引。
+        class_weights: 字典，為每個類別設置的權重，例如 {0: 1.0, 1: 1.5, 2: 2.0}。
+        
+    Returns:
+        accuracy: 總準確率。
+        predictions: 預測標籤列表。
+        ground_truths: 真實標籤列表。
+        all_scores: 所有樣本的分數詳細信息。
+        class_accuracy: 每個類別的準確率。
+    """
+
+    """將權重正規化，使總和為 1"""
+    total_weight = sum(class_weights.values())
+    class_weights = {label: weight / total_weight for label, weight in class_weights.items()}
+
     correct = 0
     total = len(test_indices)
     predictions = []
@@ -136,13 +161,19 @@ def evaluate_classification(features, labels, center_features, enrollment_indice
                 test_feature.unsqueeze(0),
                 center.unsqueeze(0)
             ).item()
+            scaled_similarity = (similarity + 1) / 2  # 將相似度範圍轉換為 0~1
+            
+            # 應用類別權重
+            weighted_score = scaled_similarity * class_weights.get(label, 1.0)  # 默認權重為 1.0
+            
             class_scores[label] = {
                 'raw': similarity,
-                'score': similarity  # 使用原始分數作為最終分數
+                'scaled': scaled_similarity,
+                'weighted': weighted_score
             }
         
-        # 使用原始相似度進行預測
-        pred_label = max(class_scores.items(), key=lambda x: x[1]['score'])[0]
+        # 使用加權分數進行預測
+        pred_label = max(class_scores.items(), key=lambda x: x[1]['weighted'])[0]
         
         # 更新總數和正確數
         class_total[true_label] += 1
@@ -229,7 +260,7 @@ def mean_current_center_features(data1, data2):
             print(f"Key {key}: No valid data, result is None")
     return average_result
 
-def analyze_features(features, labels, files, n_per_class, class_vector_pt_path, output_dir, random_state, prefix='None'):
+def analyze_features(features, labels, files, n_per_class, class_vector_pt_path, output_dir, random_state, ng_scale, prefix='None'):
     """進行特徵分析和分類評估 (只使用原始分數)"""
     # 選擇註冊樣本
     target_labels = [0] # {"ok": 0, "ng": 1, "other": 2} can found on src/utils/AudioDataset.py
@@ -242,7 +273,7 @@ def analyze_features(features, labels, files, n_per_class, class_vector_pt_path,
     
     # 評估分類效果
     accuracy, predictions, ground_truths, all_scores, class_accuracy = evaluate_classification(
-        features, labels, center_features, enrollment_indices, test_indices
+        features, labels, center_features, enrollment_indices, test_indices, {0: 1.0, 1: ng_scale, 2: 1.0}
     )
 
     # 計算質量指標
@@ -358,6 +389,7 @@ def main():
         class_vector_pt_path=args.class_vector_pt,
         output_dir=args.output_dir,
         random_state=args.seed, 
+        ng_scale=args.ng_scale, 
         prefix=args.prefix
     )
     

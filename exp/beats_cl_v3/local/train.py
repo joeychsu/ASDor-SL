@@ -212,10 +212,12 @@ def main():
                                    augment=args.use_augmentation,
                                    augment_type=args.augment_type,
                                    augment_prob=args.augment_prob,
-                                   device=device)
+                                   device=device,
+                                   random_cut=True)
     valid_dataset = AudioDataset4raw(args.valid_csv, 
                                    augment=False,
-                                   device=device)
+                                   device=device,
+                                   random_cut=True)
     
     print(f"Training set size: {len(train_dataset)}")
     print(f"Validation set size: {len(valid_dataset)}")
